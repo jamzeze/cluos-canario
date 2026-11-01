@@ -1,0 +1,35 @@
+name: canary
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: canary
+  cancel-in-progress: false
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - id: run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CANARY_HOME_URL: ${{ secrets.CANARY_HOME_URL }}
+        run: python3 canary.py
+      - name: Commit state
+        if: steps.run.outputs.commit == 'true'
+        run: |
+          git config user.name "cluos-canary[bot]"
+          git config user.email "cluos-canary@users.noreply.github.com"
+          git add canary-state.json
+          git commit -m "chore: canary state" || exit 0
+          git pull --rebase -q && git push -q
+      - name: Fail when an alert is active
+        if: steps.run.outputs.alert == 'true'
+        run: |
+          echo "Alerta ativo: veja o log do passo anterior"
+          exit 1
