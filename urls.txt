@@ -2,7 +2,6 @@
 https://cluos.online/api/public/status?scope=minimum
 https://crm.cluos.online/api/health/app
 https://sci.cluos.online/api/health
-https://loteca.cluos.online/health
 https://aeo.cluos.online/health
 https://medframe.cluos.online/health
 https://mms.cluos.online/health

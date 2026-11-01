@@ -29,10 +29,18 @@ def parse_urls(text):
     return out
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None  # 3xx vira HTTPError: redirecionamento (ex.: login Authelia) = fora
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
+
+
 def http_get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "cluos-canario"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        with _opener.open(req, timeout=TIMEOUT) as r:
             return r.status
     except urllib.error.HTTPError as e:
         return e.code
@@ -42,7 +50,7 @@ def check(urls, get):
     results = []
     for u in urls:
         try:
-            ok = get(u) < 400
+            ok = 200 <= get(u) < 300
         except Exception:
             ok = False
         results.append(Result(u, ok))
@@ -53,7 +61,7 @@ def _label(key):
     return HOME_LABEL if key == HOME_KEY else key
 
 
-def run_check(urls, get, state, now, home_url=None):
+def run_check(urls, get, state, now, home_url=None, send=None):
     """Executa um check; devolve (novo_estado, mensagens)."""
     targets = {u: u for u in urls}
     if home_url:
@@ -65,14 +73,19 @@ def run_check(urls, get, state, now, home_url=None):
     for key, url in targets.items():
         if by_key[url]:
             if key in alerted:
-                msgs.append(f"CluOS canario: {_label(key)} voltou")
+                msg = f"CluOS canario: {_label(key)} voltou"
+                msgs.append(msg)
                 alerted.discard(key)
+                if send is not None:
+                    send(msg)
         else:
-            n = state.get("failures", {}).get(key, 0) + 1
+            n = min(state.get("failures", {}).get(key, 0) + 1, 2)  # teto: estado estavel na queda longa
             failures[key] = n
             if n >= 2 and key not in alerted:
-                alerted.add(key)
-                msgs.append(f"CluOS canario: {_label(key)} fora do ar ({n} checks seguidos)")
+                msg = f"CluOS canario: {_label(key)} fora do ar (2+ checks seguidos)"
+                msgs.append(msg)
+                if send is None or send(msg):
+                    alerted.add(key)
     # alertas de alvos que sairam da lista nao ficam presos
     alerted &= set(targets)
     new = {"failures": failures, "alerted": sorted(alerted),
@@ -81,7 +94,10 @@ def run_check(urls, get, state, now, home_url=None):
 
 
 def active_alerts(state):
-    return list(state.get("alerted", []))
+    """Alvos em alerta (alertados) ou com 2+ falhas ainda nao notificadas."""
+    keys = set(state.get("alerted", []))
+    keys |= {k for k, n in state.get("failures", {}).items() if n >= 2}
+    return sorted(keys)
 
 
 def should_commit(prev, cur, now):
@@ -96,12 +112,14 @@ def should_commit(prev, cur, now):
 def send_telegram(text):
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
-        return
+        return True  # sem Telegram: o e-mail de falha do GitHub e o canal
     data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
     try:
         urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=TIMEOUT).close()
+        return True
     except Exception:
         print("aviso: falha ao enviar Telegram")  # nunca imprimir a excecao (pode conter o token)
+        return False
 
 
 def _output(name, value):
@@ -116,10 +134,9 @@ def main():
     urls = parse_urls(Path("urls.txt").read_text())
     sp = Path(STATE_FILE)
     prev = json.loads(sp.read_text()) if sp.exists() else new_state()
-    cur, msgs = run_check(urls, http_get, prev, now, os.environ.get("CANARY_HOME_URL") or None)
+    cur, msgs = run_check(urls, http_get, prev, now, os.environ.get("CANARY_HOME_URL") or None, send=send_telegram)
     for m in msgs:
         print(m)
-        send_telegram(m)
     commit = should_commit(prev, cur, now)
     if commit:
         cur["last_commit"] = now.isoformat()

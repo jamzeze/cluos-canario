@@ -84,3 +84,62 @@ def test_workflow():
     commit = [s for s in steps if "canary-state.json" in s.get("run", "") and "git commit" in s.get("run", "")]
     assert commit and "chore: canary state" in commit[0]["run"]
     assert "should_commit" in commit[0].get("if", "") or "commit" in commit[0].get("if", "")
+
+
+def test_loteca_not_monitored():
+    assert "loteca" not in Path("urls.txt").read_text()
+
+
+def test_long_outage_state_stable_after_alert():
+    st, _ = run(canary.new_state(), {U})
+    st, _ = run(st, {U})
+    st["last_commit"] = NOW.isoformat()
+    prev = dict(st)
+    for _ in range(5):
+        st, msgs = run(st, {U})
+        assert msgs == []
+    assert st == prev and not canary.should_commit(prev, st, NOW)
+
+
+def test_failed_send_keeps_pending_and_retries():
+    st, _ = run(canary.new_state(), {U})
+    get = lambda u: 500
+    st, msgs = canary.run_check([U], get, st, NOW, send=lambda m: False)
+    assert len(msgs) == 1 and st["alerted"] == [] and canary.active_alerts(st) == [U]
+    st, msgs = canary.run_check([U], get, st, NOW, send=lambda m: True)
+    assert len(msgs) == 1 and st["alerted"] == [U]
+
+
+def test_redirect_is_down():
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/ok":
+                self.send_response(200)
+            else:
+                self.send_response(302)
+                self.send_header("Location", "/ok")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        r = canary.check([base + "/ok", base + "/redir"], canary.http_get)
+    finally:
+        srv.shutdown()
+    assert [x.ok for x in r] == [True, False]
+
+
+def test_workflow_retry_and_alert_always():
+    wf = yaml.safe_load(Path(".github/workflows/canary.yml").read_text())
+    steps = wf["jobs"]["canary"]["steps"]
+    commit = [s for s in steps if "git commit" in s.get("run", "")][0]
+    assert "for i in 1 2 3" in commit["run"] and commit.get("continue-on-error")
+    alert = steps[-1]
+    assert "always()" in alert["if"] and "exit 1" in alert["run"]
