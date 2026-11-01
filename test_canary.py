@@ -149,7 +149,22 @@ def test_failed_recovery_send_retries_without_red_job():
     st, _ = run(canary.new_state(), {U})
     st, _ = run(st, {U})
     st, msgs = canary.run_check([U], lambda u: 200, st, NOW, send=lambda m: False)
-    assert "voltou" in msgs[0] and st["alerted"] == [U]
+    assert "voltou" in msgs[0] and st["alerted"] == [] and st["recovery_pending"] == [U]
     assert canary.active_alerts(st) == []
     st, msgs = canary.run_check([U], lambda u: 200, st, NOW, send=lambda m: True)
-    assert "voltou" in msgs[0] and st["alerted"] == []
+    assert "voltou" in msgs[0] and st["alerted"] == [] and st["recovery_pending"] == []
+
+
+def test_down_again_after_failed_recovery_send_alerts():
+    down, up = (lambda u: 500), (lambda u: 200)
+    sent = []
+    ok = lambda m: sent.append(m) or True
+    st = canary.new_state()
+    for _ in range(2):
+        st, _ = canary.run_check([U], down, st, NOW, send=ok)
+    st, _ = canary.run_check([U], up, st, NOW, send=lambda m: False)
+    sent.clear()
+    for _ in range(2):
+        st, _ = canary.run_check([U], down, st, NOW, send=ok)
+    assert len(sent) == 1 and "fora do ar" in sent[0]
+    assert st["alerted"] == [U] and st["recovery_pending"] == []

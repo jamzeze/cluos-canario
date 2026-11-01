@@ -17,7 +17,7 @@ Result = namedtuple("Result", "url ok")
 
 
 def new_state():
-    return {"failures": {}, "alerted": [], "last_commit": None}
+    return {"failures": {}, "alerted": [], "recovery_pending": [], "last_commit": None}
 
 
 def parse_urls(text):
@@ -68,26 +68,33 @@ def run_check(urls, get, state, now, home_url=None, send=None):
         targets[HOME_KEY] = home_url
     by_key = {r.url: r.ok for r in check(list(targets.values()), get)}
     failures = {}
-    alerted = set(state.get("alerted", []))
+    alerted = set(state.get("alerted", []))  # "fora" entregue e ainda fora
+    pending = set(state.get("recovery_pending", []))  # "voltou" ainda nao entregue
     msgs = []
     for key, url in targets.items():
         if by_key[url]:
-            if key in alerted:
+            if key in alerted or key in pending:
                 msg = f"CluOS canario: {_label(key)} voltou"
                 msgs.append(msg)
+                alerted.discard(key)
                 if send is None or send(msg):
-                    alerted.discard(key)  # senao fica em alerted e repete no proximo run
+                    pending.discard(key)
+                else:
+                    pending.add(key)  # repete no proximo run
         else:
             n = min(state.get("failures", {}).get(key, 0) + 1, 2)  # teto: estado estavel na queda longa
             failures[key] = n
             if n >= 2 and key not in alerted:
+                pending.discard(key)  # nova queda: "fora" sai normalmente
                 msg = f"CluOS canario: {_label(key)} fora do ar (2+ checks seguidos)"
                 msgs.append(msg)
                 if send is None or send(msg):
                     alerted.add(key)
     # alertas de alvos que sairam da lista nao ficam presos
     alerted &= set(targets)
+    pending &= set(targets)
     new = {"failures": failures, "alerted": sorted(alerted),
+           "recovery_pending": sorted(pending),
            "last_commit": state.get("last_commit")}
     return new, msgs
 
@@ -98,8 +105,12 @@ def active_alerts(state):
 
 
 def should_commit(prev, cur, now):
-    if prev.get("failures") != cur.get("failures") or sorted(prev.get("alerted", [])) != sorted(cur.get("alerted", [])):
-        return True
+    for f in ("failures",):
+        if prev.get(f) != cur.get(f):
+            return True
+    for f in ("alerted", "recovery_pending"):
+        if sorted(prev.get(f, [])) != sorted(cur.get(f, [])):
+            return True
     last = prev.get("last_commit")
     if not last:
         return True
