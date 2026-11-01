@@ -143,3 +143,13 @@ def test_workflow_retry_and_alert_always():
     assert "for i in 1 2 3" in commit["run"] and commit.get("continue-on-error")
     alert = steps[-1]
     assert "always()" in alert["if"] and "exit 1" in alert["run"]
+
+
+def test_failed_recovery_send_retries_without_red_job():
+    st, _ = run(canary.new_state(), {U})
+    st, _ = run(st, {U})
+    st, msgs = canary.run_check([U], lambda u: 200, st, NOW, send=lambda m: False)
+    assert "voltou" in msgs[0] and st["alerted"] == [U]
+    assert canary.active_alerts(st) == []
+    st, msgs = canary.run_check([U], lambda u: 200, st, NOW, send=lambda m: True)
+    assert "voltou" in msgs[0] and st["alerted"] == []

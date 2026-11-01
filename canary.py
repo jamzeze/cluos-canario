@@ -75,9 +75,8 @@ def run_check(urls, get, state, now, home_url=None, send=None):
             if key in alerted:
                 msg = f"CluOS canario: {_label(key)} voltou"
                 msgs.append(msg)
-                alerted.discard(key)
-                if send is not None:
-                    send(msg)
+                if send is None or send(msg):
+                    alerted.discard(key)  # senao fica em alerted e repete no proximo run
         else:
             n = min(state.get("failures", {}).get(key, 0) + 1, 2)  # teto: estado estavel na queda longa
             failures[key] = n
@@ -94,10 +93,8 @@ def run_check(urls, get, state, now, home_url=None, send=None):
 
 
 def active_alerts(state):
-    """Alvos em alerta (alertados) ou com 2+ falhas ainda nao notificadas."""
-    keys = set(state.get("alerted", []))
-    keys |= {k for k, n in state.get("failures", {}).items() if n >= 2}
-    return sorted(keys)
+    """Alvos com 2+ falhas seguidas (notificadas ou nao). Recuperado = nao conta."""
+    return sorted(k for k, n in state.get("failures", {}).items() if n >= 2)
 
 
 def should_commit(prev, cur, now):
