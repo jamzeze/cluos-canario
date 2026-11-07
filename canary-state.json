@@ -1,6 +1,14 @@
 {
   "alerted": [],
-  "failures": {},
-  "last_commit": "2026-11-06T08:06:57.735153+00:00",
+  "failures": {
+    "https://aeo.cluos.online/health": 1,
+    "https://cluos.online/api/public/status?scope=minimum": 1,
+    "https://crm.cluos.online/api/health/app": 1,
+    "https://medframe.cluos.online/health": 1,
+    "https://mms.cluos.online/health": 1,
+    "https://porta.cluos.online/health": 1,
+    "https://sci.cluos.online/api/health": 1
+  },
+  "last_commit": "2026-11-07T02:27:30.084132+00:00",
   "recovery_pending": []
 }
