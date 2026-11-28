@@ -3,7 +3,6 @@ import json
 import os
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -134,19 +133,6 @@ def should_commit(prev, cur, now):
     return now - datetime.fromisoformat(last) >= timedelta(days=7)
 
 
-def send_telegram(text):
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat:
-        return True  # sem Telegram: o e-mail de falha do GitHub e o canal
-    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
-    try:
-        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=TIMEOUT).close()
-        return True
-    except Exception:
-        print("aviso: falha ao enviar Telegram")  # nunca imprimir a excecao (pode conter o token)
-        return False
-
-
 def _output(name, value):
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
@@ -161,15 +147,19 @@ def main():
     prev = json.loads(sp.read_text()) if sp.exists() else new_state()
     beat = os.environ.get("RYZEN_BATIMENTO")
     beats = {"ryzen": beat_ok(beat, now)} if beat else None  # sem variavel: nao monitora
+    # Sem Telegram (decisão de 27/11/2026): o aviso vai para a Soul, que lê este
+    # canary-state.json numa tarefa agendada do ChatGPT; o job vermelho do GitHub
+    # manda e-mail de reserva.
     cur, msgs = run_check(urls, http_get, prev, now, os.environ.get("CANARY_HOME_URL") or None,
-                          send=send_telegram, beats=beats)
+                          beats=beats)
     for m in msgs:
         print(m)
     commit = should_commit(prev, cur, now)
     if commit:
         cur["last_commit"] = now.isoformat()
-    sp.write_text(json.dumps(cur, indent=2, sort_keys=True) + "\n")
     alerts = active_alerts(cur)
+    cur["alertas_ativos"] = [_label(k) for k in alerts]  # o que a Soul lê
+    sp.write_text(json.dumps(cur, indent=2, sort_keys=True) + "\n")
     print(f"checks: {len(urls)} urls, alertas ativos: {len(alerts)}")
     _output("commit", "true" if commit else "false")
     _output("alert", "true" if alerts else "false")
