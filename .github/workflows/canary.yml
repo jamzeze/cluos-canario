@@ -19,6 +19,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CANARY_HOME_URL: ${{ secrets.CANARY_HOME_URL }}
+          RYZEN_BATIMENTO: ${{ vars.RYZEN_BATIMENTO }}
         run: python3 canary.py
       - name: Commit state
         continue-on-error: true

@@ -168,3 +168,21 @@ def test_down_again_after_failed_recovery_send_alerts():
         st, _ = canary.run_check([U], down, st, NOW, send=ok)
     assert len(sent) == 1 and "fora do ar" in sent[0]
     assert st["alerted"] == [U] and st["recovery_pending"] == []
+
+
+def test_ryzen_heartbeat_fresh_stale_and_absent():
+    from datetime import datetime, timedelta, timezone
+    import canary
+    now = datetime(2026, 11, 28, 12, 0, tzinfo=timezone.utc)
+    fresh = str(int((now - timedelta(minutes=6)).timestamp()))
+    stale = str(int((now - timedelta(minutes=45)).timestamp()))
+    assert canary.beat_ok(fresh, now) and not canary.beat_ok(stale, now)
+    assert not canary.beat_ok("lixo", now) and not canary.beat_ok(None, now)
+    state = canary.new_state()
+    for _ in range(2):
+        state, msgs = canary.run_check([], lambda u: 200, state, now, beats={"ryzen": canary.beat_ok(stale, now)})
+    assert msgs == ["CluOS canario: Ryzen (sinal de vida) fora do ar (2+ checks seguidos)"]
+    state, msgs = canary.run_check([], lambda u: 200, state, now, beats={"ryzen": True})
+    assert msgs == ["CluOS canario: Ryzen (sinal de vida) voltou"]
+    state, msgs = canary.run_check([], lambda u: 200, canary.new_state(), now, beats=None)
+    assert msgs == [] and "ryzen" not in state["failures"]
