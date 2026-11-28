@@ -1,18 +1,17 @@
 # cluos-canario
 
 Canario externo: verifica a cada 10 minutos os endpoints publicos do CluOS
-(`urls.txt`) e o servidor de casa. Alerta no Telegram na 2a falha seguida e no
-retorno; o job falha enquanto houver alerta ativo (e-mail automatico do GitHub).
-Nao depende do Hermes. O estado fica em `canary-state.json`, commitado a cada
+(`urls.txt`) e o sinal de vida do Ryzen. Na 2a falha seguida o alvo entra em
+`alertas_ativos` no `canary-state.json`, que a Soul le numa tarefa agendada do
+ChatGPT e avisa o Rafael; o job tambem falha enquanto houver alerta ativo
+(e-mail automatico do GitHub, como reserva). Sem Telegram e sem Hermes (27/11/2026). O estado fica em `canary-state.json`, commitado a cada
 mudanca e ao menos semanalmente (evita a desativacao do cron apos 60 dias).
 
 ## Secrets (Settings > Secrets and variables > Actions)
 
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
 - `CANARY_HOME_URL` (URL de saude do servidor de casa; nunca aparece em logs)
 
-Sem os secrets do Telegram, so o e-mail de falha do GitHub avisa.
+Variavel `RYZEN_BATIMENTO`: epoch gravado pelo Ryzen a cada 5 minutos.
 
 ## Testes
 

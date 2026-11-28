@@ -3,7 +3,6 @@ import json
 import os
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -13,6 +12,8 @@ TIMEOUT = 10
 STATE_FILE = "canary-state.json"
 HOME_KEY = "home"
 HOME_LABEL = "servidor de casa"
+BEAT_MAX_AGE = timedelta(minutes=20)
+LABELS = {HOME_KEY: HOME_LABEL, "ryzen": "Ryzen (sinal de vida)"}
 Result = namedtuple("Result", "url ok")
 
 
@@ -58,15 +59,30 @@ def check(urls, get):
 
 
 def _label(key):
-    return HOME_LABEL if key == HOME_KEY else key
+    return LABELS.get(key, key)
 
 
-def run_check(urls, get, state, now, home_url=None, send=None):
-    """Executa um check; devolve (novo_estado, mensagens)."""
+def beat_ok(value, now, max_age=BEAT_MAX_AGE):
+    """Sinal de vida: epoch em segundos gravado pelo proprio servidor."""
+    try:
+        age = now - datetime.fromtimestamp(int(value), timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return False
+    return -timedelta(minutes=5) <= age <= max_age
+
+
+def run_check(urls, get, state, now, home_url=None, send=None, beats=None):
+    """Executa um check; devolve (novo_estado, mensagens).
+
+    `beats` mapeia um alvo ao resultado de um sinal de vida (sem HTTP).
+    """
     targets = {u: u for u in urls}
     if home_url:
         targets[HOME_KEY] = home_url
     by_key = {r.url: r.ok for r in check(list(targets.values()), get)}
+    for key, ok in (beats or {}).items():
+        targets[key] = key
+        by_key[key] = ok
     failures = {}
     alerted = set(state.get("alerted", []))  # "fora" entregue e ainda fora
     pending = set(state.get("recovery_pending", []))  # "voltou" ainda nao entregue
@@ -117,19 +133,6 @@ def should_commit(prev, cur, now):
     return now - datetime.fromisoformat(last) >= timedelta(days=7)
 
 
-def send_telegram(text):
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat:
-        return True  # sem Telegram: o e-mail de falha do GitHub e o canal
-    data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
-    try:
-        urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data, timeout=TIMEOUT).close()
-        return True
-    except Exception:
-        print("aviso: falha ao enviar Telegram")  # nunca imprimir a excecao (pode conter o token)
-        return False
-
-
 def _output(name, value):
     path = os.environ.get("GITHUB_OUTPUT")
     if path:
@@ -142,14 +145,21 @@ def main():
     urls = parse_urls(Path("urls.txt").read_text())
     sp = Path(STATE_FILE)
     prev = json.loads(sp.read_text()) if sp.exists() else new_state()
-    cur, msgs = run_check(urls, http_get, prev, now, os.environ.get("CANARY_HOME_URL") or None, send=send_telegram)
+    beat = os.environ.get("RYZEN_BATIMENTO")
+    beats = {"ryzen": beat_ok(beat, now)} if beat else None  # sem variavel: nao monitora
+    # Sem Telegram (decisão de 27/11/2026): o aviso vai para a Soul, que lê este
+    # canary-state.json numa tarefa agendada do ChatGPT; o job vermelho do GitHub
+    # manda e-mail de reserva.
+    cur, msgs = run_check(urls, http_get, prev, now, os.environ.get("CANARY_HOME_URL") or None,
+                          beats=beats)
     for m in msgs:
         print(m)
     commit = should_commit(prev, cur, now)
     if commit:
         cur["last_commit"] = now.isoformat()
-    sp.write_text(json.dumps(cur, indent=2, sort_keys=True) + "\n")
     alerts = active_alerts(cur)
+    cur["alertas_ativos"] = [_label(k) for k in alerts]  # o que a Soul lê
+    sp.write_text(json.dumps(cur, indent=2, sort_keys=True) + "\n")
     print(f"checks: {len(urls)} urls, alertas ativos: {len(alerts)}")
     _output("commit", "true" if commit else "false")
     _output("alert", "true" if alerts else "false")
